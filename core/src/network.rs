@@ -131,7 +131,7 @@ where
 impl<TTrans, TInEvent, TOutEvent, TMuxer, THandler>
     Network<TTrans, TInEvent, TOutEvent, THandler>
 where
-    TTrans: Transport + Clone,
+    TTrans: Transport + Clone + Send + 'static,
     TMuxer: StreamMuxer,
     THandler: IntoConnectionHandler + Send + 'static,
     THandler::Handler: ConnectionHandler<Substream = Substream<TMuxer>, InEvent = TInEvent, OutEvent = TOutEvent> + Send,
@@ -218,7 +218,7 @@ where
     pub fn dial(&mut self, address: &Multiaddr, handler: THandler)
         -> Result<ConnectionId, ConnectionLimit>
     where
-        TTrans: Transport<Output = (PeerId, TMuxer)>,
+        TTrans: Transport<Output = (PeerId, TMuxer)> + Clone + Send + 'static,
         TTrans::Error: Send + 'static,
         TTrans::Dial: Send + 'static,
         TMuxer: Send + Sync + 'static,
@@ -460,7 +460,7 @@ fn dial_peer_impl<TMuxer, TInEvent, TOutEvent, THandler, TTrans>(
     pool: &mut Pool<TInEvent, TOutEvent, THandler, TTrans::Error,
         <THandler::Handler as ConnectionHandler>::Error>,
     dialing: &mut FnvHashMap<PeerId, SmallVec<[peer::DialingState; 10]>>,
-    opts: DialingOpts<PeerId, THandler>
+    mut opts: DialingOpts<PeerId, THandler>
 ) -> Result<ConnectionId, ConnectionLimit>
 where
     THandler: IntoConnectionHandler + Send + 'static,
@@ -471,7 +471,7 @@ where
         InEvent = TInEvent,
         OutEvent = TOutEvent,
     > + Send + 'static,
-    TTrans: Transport<Output = (PeerId, TMuxer)>,
+    TTrans: Transport<Output = (PeerId, TMuxer)> + Clone + Send + 'static,
     TTrans::Dial: Send + 'static,
     TTrans::Error: error::Error + Send + 'static,
     TMuxer: StreamMuxer + Send + Sync + 'static,
@@ -479,18 +479,14 @@ where
     TInEvent: Send + 'static,
     TOutEvent: Send + 'static,
 {
-    let result = match transport.dial(opts.address.clone()) {
-        Ok(fut) => {
-            let fut = fut.map_err(|e| PendingConnectionError::Transport(TransportError::Other(e)));
-            let info = OutgoingInfo { address: &opts.address, peer_id: Some(&opts.peer) };
-            pool.add_outgoing(fut, opts.handler, info)
-        },
-        Err(err) => {
-            let fut = future::err(PendingConnectionError::Transport(err));
-            let info = OutgoingInfo { address: &opts.address, peer_id: Some(&opts.peer) };
-            pool.add_outgoing(fut, opts.handler, info)
-        },
-    };
+    use crate::connection::happyeyeballs;
+
+    let addr = opts.address.clone();
+    let remaining = std::mem::replace(&mut opts.remaining, Vec::new());
+    let fut = happyeyeballs::connect_to(transport, addr, remaining)
+        .map_err(PendingConnectionError::Transport);
+    let info = OutgoingInfo { address: &opts.address, peer_id: Some(&opts.peer) };
+    let result = pool.add_outgoing(fut, opts.handler, info);
 
     if let Ok(id) = &result {
         dialing.entry(opts.peer).or_default().push(

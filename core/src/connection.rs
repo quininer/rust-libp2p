@@ -22,6 +22,7 @@ mod error;
 mod handler;
 mod listeners;
 mod substream;
+pub mod happyeyeballs;
 
 pub(crate) mod manager;
 pub(crate) mod pool;

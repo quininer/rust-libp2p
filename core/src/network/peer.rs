@@ -157,7 +157,7 @@ where
 impl<'a, TTrans, TMuxer, TInEvent, TOutEvent, THandler>
     Peer<'a, TTrans, TInEvent, TOutEvent, THandler>
 where
-    TTrans: Transport<Output = (PeerId, TMuxer)> + Clone,
+    TTrans: Transport<Output = (PeerId, TMuxer)> + Clone + Send + 'static,
     TTrans::Error: Send + 'static,
     TTrans::Dial: Send + 'static,
     TMuxer: StreamMuxer + Send + Sync + 'static,
